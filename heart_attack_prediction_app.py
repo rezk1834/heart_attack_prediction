@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
@@ -19,48 +18,81 @@ st.set_page_config(
     layout="wide"
 )
 
-# Function to load data
-@st.cache_data
-def load_data():
-    df = pd.read_csv('heart_attack_prediction_dataset.csv')
-    # Preprocessing similar to notebook
-    df = df.drop(['Patient ID'], axis=1)
+# Function to load data - Allow user to upload file
+def load_data(uploaded_file=None):
+    if uploaded_file is not None:
+        df = pd.read_csv(uploaded_file)
+    else:
+        # Create a sample dataset for demonstration if no file is uploaded
+        st.warning("No data file uploaded. Creating a sample dataset for demonstration.")
+        # Create sample data based on the headers provided by the user
+        data = {
+            'Gender': ['Male', 'Female', 'Male', 'Female', 'Male'] * 20,
+            'Age': np.random.randint(25, 85, 100),
+            'Blood Pressure (mmHg)': [f"{np.random.randint(100, 180)}/{np.random.randint(60, 110)}" for _ in range(100)],
+            'Cholesterol (mg/dL)': np.random.randint(150, 350, 100),
+            'Has Diabetes': np.random.choice([True, False], 100),
+            'Smoking Status': np.random.choice(['Current Smoker', 'Former Smoker', 'Never Smoked'], 100),
+            'Chest Pain Type': np.random.choice(['Typical Angina', 'Atypical Angina', 'Non-Anginal Pain', 'Asymptomatic'], 100),
+            'Treatment': np.random.choice(['Medication', 'PCI', 'CABG', 'None'], 100)
+        }
+        df = pd.DataFrame(data)
+        
+        # Add a target variable for demonstration
+        df['Heart Attack Risk'] = np.random.choice([0, 1], 100, p=[0.7, 0.3])
     
+    # Preprocessing
     # Split Blood Pressure column
-    split_cols = df['Blood Pressure'].str.split('/', expand=True)
-    split_cols.columns = ['Systolic', 'Diastolic']
-    
-    # Convert to numeric data
-    split_cols['Systolic'] = pd.to_numeric(split_cols['Systolic'])
-    split_cols['Diastolic'] = pd.to_numeric(split_cols['Diastolic'])
-    
-    # Position the columns next to Blood Pressure column
-    bp_index = df.columns.get_loc('Blood Pressure')
-    for i, col in enumerate(split_cols.columns):
-        df.insert(bp_index + 1 + i, col, split_cols[col])
-    
-    # Drop Blood Pressure column
-    df.drop(['Blood Pressure'], axis=1, inplace=True)
-    
-    # BP_Ratio
-    df['BP_Ratio'] = (df['Systolic'] / df['Diastolic']).round(2)
-    bp_ratio_index = df.columns.get_loc('BP_Ratio')
-    df.insert(bp_index + 2, 'BP_Ratio', df.pop('BP_Ratio'))
+    if 'Blood Pressure (mmHg)' in df.columns:
+        split_cols = df['Blood Pressure (mmHg)'].str.split('/', expand=True)
+        split_cols.columns = ['Systolic', 'Diastolic']
+        
+        # Convert to numeric data
+        split_cols['Systolic'] = pd.to_numeric(split_cols['Systolic'])
+        split_cols['Diastolic'] = pd.to_numeric(split_cols['Diastolic'])
+        
+        # Position the columns next to Blood Pressure column
+        bp_index = df.columns.get_loc('Blood Pressure (mmHg)')
+        for i, col in enumerate(split_cols.columns):
+            df.insert(bp_index + 1 + i, col, split_cols[col])
+        
+        # Calculate BP_Ratio
+        df['BP_Ratio'] = (df['Systolic'] / df['Diastolic']).round(2)
+        bp_ratio_index = df.columns.get_loc('BP_Ratio')
+        df.insert(bp_index + 3, 'BP_Ratio', df.pop('BP_Ratio'))
     
     # Encode categorical features
-    df['Sex'] = df['Sex'].map({'Female': 0, 'Male': 1})
-    df['Diet'] = df['Diet'].map({'Unhealthy': 0, 'Average': 1, 'Healthy': 2})
+    if 'Gender' in df.columns:
+        df['Gender'] = df['Gender'].map({'Female': 0, 'Male': 1})
     
-    # One-hot encode Continent and Hemisphere
-    df = pd.get_dummies(df, columns=['Continent', 'Hemisphere'], drop_first=True)
+    if 'Smoking Status' in df.columns:
+        df['Smoking Status'] = df['Smoking Status'].map({
+            'Never Smoked': 0, 
+            'Former Smoker': 1, 
+            'Current Smoker': 2
+        })
+    
+    if 'Chest Pain Type' in df.columns:
+        df['Chest Pain Type'] = df['Chest Pain Type'].map({
+            'Typical Angina': 0, 
+            'Atypical Angina': 1, 
+            'Non-Anginal Pain': 2, 
+            'Asymptomatic': 3
+        })
+    
+    # One-hot encode Treatment if it exists
+    if 'Treatment' in df.columns:
+        df = pd.get_dummies(df, columns=['Treatment'], drop_first=False)
     
     # Convert boolean to 0/1
     for column in df.columns:
         if df[column].dtype == 'bool' and df[column].isin([True, False]).all():
             df[column] = df[column].map({False: 0, True: 1})
     
-    # Drop Country as it's redundant
-    df = df.drop(columns="Country")
+    # If there's no Heart Attack Risk column, create a dummy one for testing
+    if 'Heart Attack Risk' not in df.columns:
+        st.warning("No 'Heart Attack Risk' column found. Adding a random one for demonstration.")
+        df['Heart Attack Risk'] = np.random.choice([0, 1], len(df), p=[0.7, 0.3])
     
     # Move Heart Attack Risk to the last column
     cols = [col for col in df.columns if col != 'Heart Attack Risk']
@@ -69,11 +101,10 @@ def load_data():
     return df
 
 # Function to train models
-@st.cache_resource
 def train_models(df):
     # Split data into features and target
-    X = df.iloc[:, 1:-1].values
-    y = df.iloc[:, -1].values
+    X = df.drop(columns=['Heart Attack Risk']).values
+    y = df['Heart Attack Risk'].values
     
     # Train-test split
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=1)
@@ -92,7 +123,7 @@ def train_models(df):
     models['SVM'] = {'model': svm, 'scaler': None}
     
     # KNN
-    knn = KNeighborsClassifier(n_neighbors=42)
+    knn = KNeighborsClassifier(n_neighbors=5)  # Using a smaller n_neighbors for the sample data
     knn.fit(X_train_scaled, y_train)
     models['KNN'] = {'model': knn, 'scaler': sc}
     
@@ -115,7 +146,7 @@ def train_models(df):
             pred = model_info['model'].predict(X_test)
         accuracies[name] = accuracy_score(y_test, pred) * 100
     
-    return models, accuracies, list(df.columns[1:-1])
+    return models, accuracies, list(df.columns[:-1])
 
 # Function to make prediction
 def predict_heart_attack_risk(input_data, model_name, models, features):
@@ -140,9 +171,15 @@ def main():
     st.title("❤️ Heart Attack Risk Prediction")
     st.write("This application predicts the risk of heart attack based on various health parameters.")
     
-    # Load data and train models
-    df = load_data()
-    models, accuracies, feature_names = train_models(df)
+    # File uploader
+    uploaded_file = st.file_uploader("Upload your data (CSV file)", type="csv")
+    
+    # Load data
+    df = load_data(uploaded_file)
+    
+    # Train models
+    with st.spinner("Training models..."):
+        models, accuracies, feature_names = train_models(df)
     
     # Create sidebar for navigation
     st.sidebar.title("Navigation")
@@ -150,89 +187,77 @@ def main():
     selection = st.sidebar.radio("Go to", pages)
     
     if selection == "Prediction":
-        st.header("Predict Your Heart Attack Risk")
+        st.header("Predict Heart Attack Risk")
         
         # Create two columns for input form
         col1, col2 = st.columns(2)
         
-        with col1:
-            age = st.slider("Age", 18, 100, 40)
-            sex = st.selectbox("Sex", options=["Male", "Female"])
-            sex_encoded = 1 if sex == "Male" else 0
-            
-            cholesterol = st.slider("Cholesterol", 100, 400, 200)
-            heart_rate = st.slider("Heart Rate", 40, 200, 75)
-            exercise_hours_week = st.slider("Exercise Hours/Week", 0, 20, 3)
-            stress_level = st.slider("Stress Level", 1, 10, 5)
-            sedentary_hours_day = st.slider("Sedentary Hours/Day", 0, 24, 8)
-            income = st.slider("Income (USD)", 10000, 200000, 50000)
-            
-        with col2:
-            systolic = st.slider("Systolic BP", 80, 220, 120)
-            diastolic = st.slider("Diastolic BP", 40, 140, 80)
-            bp_ratio = round(systolic / diastolic, 2)
-            
-            bmi = st.slider("BMI", 10.0, 50.0, 25.0)
-            
-            diet = st.selectbox("Diet", options=["Unhealthy", "Average", "Healthy"])
-            diet_encoded = {"Unhealthy": 0, "Average": 1, "Healthy": 2}[diet]
-            
-            diabetes = st.checkbox("Diabetes")
-            family_history = st.checkbox("Family History of Heart Disease")
-            smoking = st.checkbox("Smoking")
-            obesity = st.checkbox("Obesity")
-            alcohol_consumption = st.checkbox("Alcohol Consumption")
-            previous_heart_problems = st.checkbox("Previous Heart Problems")
-            medication_use = st.checkbox("Medication Use")
-            
-            # Continent selection
-            continent = st.selectbox("Continent", 
-                                   ["Europe", "North America", "South America", "Asia", "Africa", "Australia"])
-            continent_europe = 1 if continent == "Europe" else 0
-            continent_north_america = 1 if continent == "North America" else 0
-            continent_south_america = 1 if continent == "South America" else 0
-            continent_asia = 1 if continent == "Asia" else 0
-            continent_africa = 1 if continent == "Africa" else 0
-            
-            # Hemisphere selection
-            hemisphere = st.selectbox("Hemisphere", ["Northern", "Southern"])
-            hemisphere_northern = 1 if hemisphere == "Northern" else 0
+        # Define input fields based on the dataset columns
+        input_data = {}
         
-        # Display BP Ratio
-        st.info(f"Calculated BP Ratio: {bp_ratio}")
+        with col1:
+            if 'Age' in df.columns:
+                input_data['Age'] = st.slider("Age", 18, 100, 40)
+            
+            if 'Gender' in df.columns:
+                gender = st.selectbox("Gender", options=["Male", "Female"])
+                input_data['Gender'] = 1 if gender == "Male" else 0
+            
+            if 'Cholesterol (mg/dL)' in df.columns:
+                input_data['Cholesterol (mg/dL)'] = st.slider("Cholesterol (mg/dL)", 100, 400, 200)
+            
+            if 'Has Diabetes' in df.columns:
+                input_data['Has Diabetes'] = int(st.checkbox("Has Diabetes"))
+            
+            if 'Smoking Status' in df.columns:
+                smoking_status = st.selectbox("Smoking Status", 
+                                           ["Never Smoked", "Former Smoker", "Current Smoker"])
+                input_data['Smoking Status'] = {
+                    "Never Smoked": 0, 
+                    "Former Smoker": 1, 
+                    "Current Smoker": 2
+                }[smoking_status]
+        
+        with col2:
+            if 'Systolic' in df.columns and 'Diastolic' in df.columns:
+                systolic = st.slider("Systolic BP", 80, 220, 120)
+                diastolic = st.slider("Diastolic BP", 40, 140, 80)
+                input_data['Systolic'] = systolic
+                input_data['Diastolic'] = diastolic
+                
+                if 'BP_Ratio' in df.columns:
+                    bp_ratio = round(systolic / diastolic, 2)
+                    input_data['BP_Ratio'] = bp_ratio
+                    st.info(f"Calculated BP Ratio: {bp_ratio}")
+            
+            if 'Chest Pain Type' in df.columns:
+                chest_pain = st.selectbox("Chest Pain Type", 
+                                       ["Typical Angina", "Atypical Angina", "Non-Anginal Pain", "Asymptomatic"])
+                input_data['Chest Pain Type'] = {
+                    "Typical Angina": 0, 
+                    "Atypical Angina": 1, 
+                    "Non-Anginal Pain": 2, 
+                    "Asymptomatic": 3
+                }[chest_pain]
+            
+            # Treatment checkboxes if they exist in the dataframe
+            treatment_cols = [col for col in df.columns if col.startswith('Treatment_')]
+            if treatment_cols:
+                st.subheader("Treatment Options")
+                for col in treatment_cols:
+                    treatment_name = col.replace('Treatment_', '')
+                    input_data[col] = int(st.checkbox(f"{treatment_name}"))
+        
+        # Fill in any missing columns with default values
+        for col in feature_names:
+            if col not in input_data:
+                if df[col].dtype == np.int64 or df[col].dtype == np.float64:
+                    input_data[col] = df[col].mean()
+                else:
+                    input_data[col] = df[col].mode()[0]
         
         # Select model for prediction
         model_name = st.selectbox("Select Model", list(models.keys()))
-        
-        # Create input data dictionary
-        input_data = {
-            'Age': age,
-            'Sex': sex_encoded,
-            'Cholesterol': cholesterol,
-            'Heart Rate': heart_rate,
-            'Diabetes': int(diabetes),
-            'Family History': int(family_history),
-            'Smoking': int(smoking),
-            'Obesity': int(obesity),
-            'Alcohol Consumption': int(alcohol_consumption),
-            'Exercise Hours Per Week': exercise_hours_week,
-            'Diet': diet_encoded,
-            'Previous Heart Problems': int(previous_heart_problems),
-            'Medication Use': int(medication_use),
-            'Stress Level': stress_level,
-            'Sedentary Hours Per Day': sedentary_hours_day,
-            'Income': income,
-            'BMI': bmi,
-            'Systolic': systolic,
-            'Diastolic': diastolic,
-            'BP_Ratio': bp_ratio,
-            'Continent_Africa': continent_africa,
-            'Continent_Asia': continent_asia,
-            'Continent_Europe': continent_europe,
-            'Continent_North America': continent_north_america,
-            'Continent_South America': continent_south_america,
-            'Hemisphere_Northern': hemisphere_northern
-        }
         
         # Make prediction button
         if st.button("Predict"):
@@ -300,13 +325,14 @@ def main():
         ax.set_xticklabels(['No', 'Yes'])
         st.pyplot(fig)
         
-        # Age distribution
-        fig, ax = plt.subplots(figsize=(10, 6))
-        sns.histplot(df['Age'], kde=True, bins=15, color='skyblue', ax=ax)
-        ax.set_title('Age Distribution')
-        ax.set_xlabel('Age')
-        ax.set_ylabel('Frequency')
-        st.pyplot(fig)
+        # Age distribution if exists
+        if 'Age' in df.columns:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.histplot(df['Age'], kde=True, bins=15, color='skyblue', ax=ax)
+            ax.set_title('Age Distribution')
+            ax.set_xlabel('Age')
+            ax.set_ylabel('Frequency')
+            st.pyplot(fig)
         
         # Correlation heatmap
         st.subheader("Feature Correlation")
